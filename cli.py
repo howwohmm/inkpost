@@ -286,7 +286,8 @@ def _which(name):
 
 
 def check_all():
-    """-> list of (ok, label, detail, fix). the whole readiness picture."""
+    """-> list of (ok, label, detail, fix, required). the readiness picture.
+    `required` is False for things that are nice to have but not needed."""
     rows = []
 
     d2 = _which(config.D2_BIN) or _which("d2")
@@ -296,7 +297,7 @@ def check_all():
                                timeout=10).stdout.strip()
         except Exception:                            # noqa: BLE001
             v = "?"
-        rows.append((True, "d2", "%s  %s" % (v, d2), ""))
+        rows.append((True, "d2", "%s  %s" % (v, d2), "", True))
         try:
             lay = subprocess.run([d2, "layout"], capture_output=True, text=True,
                                  timeout=10).stdout.lower()
@@ -304,31 +305,32 @@ def check_all():
         except Exception:                            # noqa: BLE001
             has = False
         rows.append((has, "tala layout",
-                     "bundled with d2" if has else "missing — most patterns need it",
-                     "" if has else "update d2 to v0.9.0 or newer"))
+                     "bundled with d2" if has else "missing. most patterns need it",
+                     "" if has else "update d2 to v0.9.0 or newer", True))
     else:
         rows.append((False, "d2", "not found",
-                     "brew install d2   (or: curl -fsSL https://d2lang.com/install.sh | sh -s --)"))
-        rows.append((False, "tala layout", "cannot check without d2", ""))
+                     "brew install d2", True))
+        rows.append((False, "tala layout", "cannot check without d2", "", True))
 
     claude = _which(config.CLAUDE_BIN)
     key = bool(config.load_env())
     rows.append((bool(claude), "claude cli",
-                 "best wording, ~2 min a post" if claude else "not installed (optional)",
-                 "" if claude else "npm i -g @anthropic-ai/claude-code"))
+                 "best wording, ~2 min a post" if claude else "not installed",
+                 "" if claude else "npm i -g @anthropic-ai/claude-code", False))
     rows.append((key, "openrouter key",
-                 "free models, 12-25s a post" if key else "no key in .env (optional)",
-                 "" if key else "inkpost setup   — or put OPENROUTER_API_KEY in .env"))
+                 "free models, 12-25s a post" if key else "no key in .env",
+                 "" if key else "inkpost --setup", False))
 
     ready = bool(claude) or key
-    rows.append((ready, "a model", "ready" if ready else "none — only the mock backend works",
-                 "" if ready else "add either of the two above"))
+    rows.append((ready, "a model",
+                 "ready" if ready else "none. only the mock backend works",
+                 "" if ready else "inkpost --setup", True))
 
     posts = blog_posts()
     rows.append((bool(posts), "posts folder",
                  "%d posts in %s" % (len(posts), config.POSTS_DIR) if posts
                  else "nothing in %s" % config.POSTS_DIR,
-                 "" if posts else "pass a file directly, or --posts-dir /path/to/posts"))
+                 "" if posts else "pass a file path, or set INKPOST_POSTS_DIR", False))
     return rows
 
 
@@ -337,19 +339,24 @@ def show_doctor():
     say(BOLD("  checking your setup"))
     say()
     blocked = False
-    for ok, label, detail, fix in check_all():
-        mark = OK("ok  ") if ok else BAD("no  ")
+    for ok, label, detail, fix, required in check_all():
+        if ok:
+            mark = OK("ok  ")
+        elif required:
+            mark = BAD("no  ")
+            blocked = True
+        else:
+            mark = DIM("--  ")
         say("   %s %s  %s" % (mark, label.ljust(15), DIM(detail)))
         if not ok and fix:
-            say("        %s %s" % (DIM("fix:"), fix))
-            blocked = True
+            say("        %s %s" % (DIM("optional:" if not required else "fix:"), fix))
     say()
     if blocked:
-        say(DIM("  run ") + BOLD("inkpost setup") + DIM(" to be walked through it."))
+        say(DIM("  run ") + BOLD("inkpost --setup") + DIM(" to be walked through it."))
     else:
-        say(OK("  all good.") + DIM("  try: inkpost"))
+        say(OK("  ready.") + DIM("  try: inkpost"))
     say()
-    return 0 if not blocked else 1
+    return 1 if blocked else 0
 
 
 def show_setup():
@@ -558,12 +565,12 @@ def main(argv=None):
 
     # first-run kindness: if the essentials are missing, say so plainly instead
     # of failing somewhere deeper with a stack trace.
-    blockers = [r for r in check_all() if not r[0] and r[3]]
+    blockers = [r for r in check_all() if not r[0] and r[4]]
     if blockers and a.backend == "auto":
         hard = [r for r in blockers if r[1] in ("d2", "a model")]
         if hard:
             say()
-            for _, label, detail, fix in hard:
+            for _, label, detail, fix, _req in hard:
                 say("  %s %s — %s" % (BAD("✗"), label, detail))
                 say("    %s %s" % (DIM("fix:"), fix))
             say()
