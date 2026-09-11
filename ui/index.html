@@ -145,8 +145,8 @@ select{appearance:none; padding-right:26px;
 .posts .row{display:block; width:100%; text-align:left; background:none; border:0;
   border-bottom:1px solid var(--rule); padding:8px 10px}
 .posts .row:last-child{border-bottom:0}
-.posts .row:hover,.posts .row[aria-current=true]{background:var(--sunk)}
-.posts .row[aria-current=true]{box-shadow:inset 3px 0 0 var(--accent)}
+.posts .row:hover,.posts .row[aria-selected=true]{background:var(--sunk)}
+.posts .row[aria-selected=true]{box-shadow:inset 3px 0 0 var(--accent)}
 .posts .t{font-size:13px; display:block; overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap}
 .posts .m{font:10.5px/1.5 var(--mono); color:var(--muted)}
@@ -541,7 +541,8 @@ async function loadPosts() {
   }
   for (const p of j.posts) {
     const b = el("button", "row");
-    b.type = "button"; b.setAttribute("role", "option"); b.dataset.file = p.file;
+    b.type = "button"; b.setAttribute("role", "option");
+    b.setAttribute("aria-selected", "false"); b.dataset.file = p.file;
     b.appendChild(el("span", "t", p.title));
     b.appendChild(el("span", "m", p.date + " · " + p.bytes + "b"));
     b.addEventListener("click", () => openPost(p.file));
@@ -555,7 +556,7 @@ async function openPost(file) {
   $("text").value = j.raw; $("title").value = j.title || "";
   $("clean").textContent = j.clean || "";
   for (const b of $("posts").children)
-    b.setAttribute("aria-current", String(b.dataset.file === file));
+    b.setAttribute("aria-selected", String(b.dataset.file === file));
   countLabel();
 }
 
@@ -698,6 +699,9 @@ function startPoll(slug, quiet) {
 }
 
 async function reopen(slug) {
+  /* kill any in-flight poll FIRST: otherwise the run we were watching ticks one
+     more time and paints itself back over the run the user just clicked. */
+  stopPoll(); BUSY = false; $("go").disabled = false;
   let j; try { j = await api("/api/status?slug=" + encodeURIComponent(slug)); } catch (e) { return; }
   if (j.ok === false) { toast(j.error || "no such run", true); return; }
   RUN = j; LASTSIG = ""; $("logwrap").hidden = false;
@@ -851,9 +855,15 @@ function legend() {
   return wrap;
 }
 
+let LOGSIG = "";
 function paintLog() {
   const box = $("log"), lines = (RUN && RUN.log) || [];
-  if (box.childElementCount === lines.length) return;
+  const last = lines.length ? lines[lines.length - 1] : null;
+  /* the server rolls the log at LOG_CAP, so the LENGTH stops changing while the
+     content still moves — sign it with the tail, never with the count. */
+  const s = lines.length + "|" + (last ? last.t + last.msg : "");
+  if (s === LOGSIG) return;
+  LOGSIG = s;
   clear(box);
   for (const l of lines) {
     const d = el("div");
@@ -1004,6 +1014,11 @@ function paintDetail() {
   if (!DETAIL) return;
   const d = rowOf(DETAIL.id);
   if (!d) { dv.close(); return; }
+  /* a poll repaints this dialog. if the cursor is in the d2 box, put it back
+     exactly where it was — an edit in progress must survive a re-render. */
+  const live = document.activeElement;
+  const keep = live && live.id === "d2"
+    ? { a: live.selectionStart, b: live.selectionEnd, top: live.scrollTop } : null;
   const cols = columns();
   const shell = clear(dv).appendChild(el("div", "dv"));
 
@@ -1055,6 +1070,10 @@ function paintDetail() {
   body.appendChild(pane);
   body.appendChild(sidePane(d));
   shell.appendChild(body);
+  if (keep) {
+    const ta = $("d2");
+    if (ta) { ta.focus(); ta.setSelectionRange(keep.a, keep.b); ta.scrollTop = keep.top; }
+  }
 }
 
 function sidePane(d) {
@@ -1110,7 +1129,7 @@ function sidePane(d) {
 
   const edit = el("div", "edit");
   const gut = el("div", "gut");
-  const ta = el("textarea"); ta.id = "d2"; ta.spellcheck = false;
+  const ta = el("textarea"); ta.id = "d2"; ta.spellcheck = false; ta.wrap = "off";
   ta.setAttribute("aria-label", "d2 source for " + d.id);
   ta.value = SRC.d2;
   const badLines = new Set((SRC.errors || []).map((e) => e.line));
@@ -1217,7 +1236,7 @@ document.addEventListener("keydown", (e) => {
 $("go").addEventListener("click", () => { if (!BUSY) go(); });
 $("paste").addEventListener("click", () => {
   $("text").value = ""; $("title").value = ""; $("clean").textContent = "";
-  for (const b of $("posts").children) b.setAttribute("aria-current", "false");
+  for (const b of $("posts").children) b.setAttribute("aria-selected", "false");
   $("text").focus();
 });
 $("reveal").addEventListener("click", async () => {

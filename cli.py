@@ -279,6 +279,145 @@ def show_runs():
     say()
 
 
+
+# ------------------------------------------------------------------- doctor
+def _which(name):
+    return shutil.which(name) or (name if os.path.exists(name) else None)
+
+
+def check_all():
+    """-> list of (ok, label, detail, fix). the whole readiness picture."""
+    rows = []
+
+    d2 = _which(config.D2_BIN) or _which("d2")
+    if d2:
+        try:
+            v = subprocess.run([d2, "--version"], capture_output=True, text=True,
+                               timeout=10).stdout.strip()
+        except Exception:                            # noqa: BLE001
+            v = "?"
+        rows.append((True, "d2", "%s  %s" % (v, d2), ""))
+        try:
+            lay = subprocess.run([d2, "layout"], capture_output=True, text=True,
+                                 timeout=10).stdout.lower()
+            has = "tala" in lay
+        except Exception:                            # noqa: BLE001
+            has = False
+        rows.append((has, "tala layout",
+                     "bundled with d2" if has else "missing — most patterns need it",
+                     "" if has else "update d2 to v0.9.0 or newer"))
+    else:
+        rows.append((False, "d2", "not found",
+                     "brew install d2   (or: curl -fsSL https://d2lang.com/install.sh | sh -s --)"))
+        rows.append((False, "tala layout", "cannot check without d2", ""))
+
+    claude = _which(config.CLAUDE_BIN)
+    key = bool(config.load_env())
+    rows.append((bool(claude), "claude cli",
+                 "best wording, ~2 min a post" if claude else "not installed (optional)",
+                 "" if claude else "npm i -g @anthropic-ai/claude-code"))
+    rows.append((key, "openrouter key",
+                 "free models, 12-25s a post" if key else "no key in .env (optional)",
+                 "" if key else "inkpost setup   — or put OPENROUTER_API_KEY in .env"))
+
+    ready = bool(claude) or key
+    rows.append((ready, "a model", "ready" if ready else "none — only the mock backend works",
+                 "" if ready else "add either of the two above"))
+
+    posts = blog_posts()
+    rows.append((bool(posts), "posts folder",
+                 "%d posts in %s" % (len(posts), config.POSTS_DIR) if posts
+                 else "nothing in %s" % config.POSTS_DIR,
+                 "" if posts else "pass a file directly, or --posts-dir /path/to/posts"))
+    return rows
+
+
+def show_doctor():
+    say()
+    say(BOLD("  checking your setup"))
+    say()
+    blocked = False
+    for ok, label, detail, fix in check_all():
+        mark = OK("ok  ") if ok else BAD("no  ")
+        say("   %s %s  %s" % (mark, label.ljust(15), DIM(detail)))
+        if not ok and fix:
+            say("        %s %s" % (DIM("fix:"), fix))
+            blocked = True
+    say()
+    if blocked:
+        say(DIM("  run ") + BOLD("inkpost setup") + DIM(" to be walked through it."))
+    else:
+        say(OK("  all good.") + DIM("  try: inkpost"))
+    say()
+    return 0 if not blocked else 1
+
+
+def show_setup():
+    """a short interactive walkthrough. writes .env only with consent."""
+    say()
+    say(BOLD("  inkpost setup"))
+    say(DIM("  three things decide whether this works: d2, a model, and some posts."))
+    say()
+
+    d2 = _which(config.D2_BIN) or _which("d2")
+    if d2:
+        say("   %s d2 is installed" % OK("✓"))
+    else:
+        say("   %s d2 is missing. it does the drawing, so it is required." % BAD("✗"))
+        say("     " + BOLD("brew install d2"))
+        say(DIM("     or: curl -fsSL https://d2lang.com/install.sh | sh -s --"))
+        say(DIM("     then run inkpost setup again."))
+        say()
+        return 1
+
+    if config.load_env():
+        say("   %s openrouter key found" % OK("✓"))
+    elif _which(config.CLAUDE_BIN):
+        say("   %s the claude cli is installed — that is enough" % OK("✓"))
+        say(DIM("     an openrouter key would also give you a faster free option."))
+    else:
+        say("   %s no model yet. the free option takes about a minute to set up:" % WARN("!"))
+        say("     1. open " + BOLD("https://openrouter.ai/keys"))
+        say("     2. make a key (free models cost nothing)")
+        say("     3. paste it below")
+        say()
+        try:
+            key = input(DIM("   paste key (or press enter to skip) › ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            key = ""
+        if key.startswith("sk-or-"):
+            envp = os.path.join(config.ROOT, ".env")
+            existing = ""
+            if os.path.exists(envp):
+                with open(envp, encoding="utf-8") as fh:
+                    existing = fh.read()
+            if "OPENROUTER_API_KEY" in existing:
+                say("   " + WARN("a key is already in .env — leaving it alone"))
+            else:
+                with open(envp, "a", encoding="utf-8") as fh:
+                    if existing and not existing.endswith("\n"):
+                        fh.write("\n")
+                    fh.write("OPENROUTER_API_KEY=%s\n" % key)
+                say("   %s saved to .env (gitignored)" % OK("✓"))
+        elif key:
+            say("   " + BAD("that does not look like an openrouter key (they start sk-or-)"))
+        else:
+            say(DIM("   skipped. the mock backend still works for trying things out."))
+
+    posts = blog_posts()
+    if posts:
+        say("   %s %d posts in %s" % (OK("✓"), len(posts), config.POSTS_DIR))
+    else:
+        say("   %s no posts folder yet" % WARN("!"))
+        say(DIM("     point at yours: ") + BOLD("export INKPOST_POSTS_DIR=/path/to/your/posts"))
+        say(DIM("     or just pass a file: ") + BOLD("inkpost some-post.md"))
+
+    say()
+    say("  " + BOLD("you are set.") + DIM("  run ") + BOLD("inkpost") + DIM(" to pick a post."))
+    say()
+    return 0
+
+
 # ----------------------------------------------------------------------- run
 def do_run(text, title, slug, modes, fmts, backend, model, open_after):
     run_dir = os.path.join(config.RUNS_DIR, slug)
@@ -388,6 +527,8 @@ def main(argv=None):
     ap.add_argument("--model", default=None, help="override the model")
     ap.add_argument("--list", action="store_true", help="posts, modes, backends")
     ap.add_argument("--runs", action="store_true", help="what you have made")
+    ap.add_argument("--doctor", action="store_true", help="check d2, models and posts")
+    ap.add_argument("--setup", action="store_true", help="walk through first-time setup")
     ap.add_argument("--open", dest="open_slug", default=None, help="reopen a run")
     ap.add_argument("--posts-dir", default=None,
                     help="folder of .md posts to pick from (else INKPOST_POSTS_DIR, else ./posts)")
@@ -398,6 +539,10 @@ def main(argv=None):
     if a.posts_dir:
         config.POSTS_DIR = os.path.abspath(os.path.expanduser(a.posts_dir))
 
+    if a.doctor:
+        raise SystemExit(show_doctor())
+    if a.setup:
+        raise SystemExit(show_setup())
     if a.list:
         return show_list()
     if a.runs:
@@ -410,6 +555,22 @@ def main(argv=None):
 
     modes = parse_modes(a.modes)
     fmts = [x.strip() for x in a.formats.split(",") if x.strip()]
+
+    # first-run kindness: if the essentials are missing, say so plainly instead
+    # of failing somewhere deeper with a stack trace.
+    blockers = [r for r in check_all() if not r[0] and r[3]]
+    if blockers and a.backend == "auto":
+        hard = [r for r in blockers if r[1] in ("d2", "a model")]
+        if hard:
+            say()
+            for _, label, detail, fix in hard:
+                say("  %s %s — %s" % (BAD("✗"), label, detail))
+                say("    %s %s" % (DIM("fix:"), fix))
+            say()
+            say(DIM("  or see everything at once: ") + BOLD("inkpost --doctor"))
+            say()
+            raise SystemExit(1)
+
     text, title, slug = resolve_post(a.post) if a.post else pick_post()
     do_run(text, title, slug, modes, fmts, a.backend, a.model, not a.no_open)
 

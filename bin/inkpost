@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# inkpost — run from a clone without installing.
+# prefers the repo's .venv (clypi styling), else system python3.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$DIR/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" "$DIR/cli.py" "$@"

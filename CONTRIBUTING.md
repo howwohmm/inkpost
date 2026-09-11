@@ -52,9 +52,10 @@ The lane rule is worth keeping: only `renderer.py` shells out to `d2`, and only
 `planner.py` talks to a model. If you find yourself wanting a subprocess call in
 `server.py`, you are in the wrong file.
 
-`SPEC.md` is the original build specification and stays authoritative on the
-hard-won details — which flags matter, why the preflight is a real compile,
-which d2 behaviours are traps.
+`docs/internal/SPEC.md` is the original build specification. It still explains the
+hard-won details: which flags matter, why the preflight is a real compile, and which
+d2 behaviours are traps. Parts of it no longer match the code, because the prompts in
+`planner.py` were rewritten after it. Read the code first and the spec second.
 
 ## adding a pattern
 
