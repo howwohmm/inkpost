@@ -1,0 +1,17 @@
+# layers: what people see wraps what actually matters
+outer: "what people think it is" {
+  style.stroke-dash: 5
+  style.fill: transparent
+  middle: "the visible layer" {
+    style.fill: "#f4f4f4"
+    core: "the real thing" {
+      style.fill: "#ffe8a3"
+      style.bold: true
+      a: "detail one"
+      b: "detail two"
+      c: "detail three"
+    }
+  }
+}
+note: "takes years. invisible while forming." {shape: text; style.italic: true}
+note -> outer.middle.core: {style.stroke-dash: 3}

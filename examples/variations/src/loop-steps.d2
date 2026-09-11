@@ -1,0 +1,29 @@
+direction: down
+steps: {
+  1: {
+    bandwidth: "no deadline =\ntoo much bandwidth" {shape: oval}
+  }
+  2: {
+    plan: "planning how to\ndo the work"
+    bandwidth -> plan
+  }
+  3: {
+    research: "researching the\nperfect way"
+    plan -> research
+  }
+  4: {
+    systems: "building systems\nto help do it"
+    research -> systems
+  }
+  5: {
+    bad: "feeling bad about\nnot doing it"
+    systems -> bad
+    bad -> plan: "again" {style.stroke-dash: 3}
+  }
+  6: {
+    deadline: "12 hours before it's due" {shape: hexagon; style.fill: "#ffe8a3"}
+    exec: "execution mode.\none sitting."
+    bad -> deadline: "a real consequence"
+    deadline -> exec
+  }
+}

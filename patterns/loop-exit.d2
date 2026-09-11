@@ -1,0 +1,15 @@
+# loop-exit: the cycle, and the one edge that breaks it
+direction: down
+start: "the condition" {shape: oval}
+s1: "step one"
+s2: "step two"
+s3: "step three"
+s4: "feel bad about it"
+start -> s1 -> s2 -> s3 -> s4
+s4 -> s1: "again" {style.stroke-dash: 3}
+exit: "the real consequence" {shape: hexagon; style.fill: "#ffe8a3"}
+done: "execution mode."
+s4 -> exit
+exit -> done
+note: "this isn't laziness. it's rational." {shape: text; style.italic: true}
+note.near: bottom-center

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# render file.d2 [png|svg|gif|pdf|pptx] [--layout tala|dagre|elk] [--theme N] [--clean] [--out DIR]
+set -euo pipefail
+f="${1:?usage: render file.d2 [fmt] [--layout L] [--theme N] [--clean] [--out DIR]}"; shift
+fmt="png"; layout="tala"; theme="1"; sketch="true"; out=""
+[[ $# -gt 0 && "$1" != --* ]] && { fmt="$1"; shift; }
+while [[ $# -gt 0 ]]; do case "$1" in
+  --layout) layout="$2"; shift 2;; --theme) theme="$2"; shift 2;;
+  --clean) sketch="false"; shift;; --out) out="$2"; shift 2;; *) echo "unknown $1"; exit 1;; esac; done
+base="$(basename "${f%.d2}")"; dir="${out:-$(dirname "$f")/out}"; mkdir -p "$dir"
+extra=(); [[ "$fmt" == "gif" ]] && extra=(--animate-interval 1200); [[ "$fmt" == "png" ]] && extra=(--scale 2)
+d2 --layout="$layout" --sketch="$sketch" --theme="$theme" --pad 40 "${extra[@]}" "$f" "$dir/$base.$fmt"
+echo "$dir/$base.$fmt"

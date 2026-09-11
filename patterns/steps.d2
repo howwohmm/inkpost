@@ -1,0 +1,9 @@
+# steps: reveal one idea at a time → ./render steps.d2 gif  (also pdf, pptx)
+direction: down
+steps: {
+  1: { start: "the condition" {shape: oval} }
+  2: { s1: "step one"; start -> s1 }
+  3: { s2: "step two"; s1 -> s2 }
+  4: { s3: "feel bad about it"; s2 -> s3; s3 -> s1: "again" {style.stroke-dash: 3} }
+  5: { exit: "the consequence" {shape: hexagon; style.fill: "#ffe8a3"}; done: "execution."; s3 -> exit -> done }
+}

@@ -1,0 +1,11 @@
+direction: right
+post: "a post" {
+  shape: sql_table
+  title: string
+  date: date
+  description: string
+  tags: list
+  draft: bool
+}
+file: "content/posts/YYYY-MM-DD-slug.md" {shape: page}
+file -> post: "frontmatter"

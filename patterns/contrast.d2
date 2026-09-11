@@ -1,0 +1,22 @@
+# contrast: the clean thing vs the messy thing (human-vs-LM)
+direction: right
+clean: "the tidy version" {
+  in: "input"
+  out: "glassy output"
+  in -> out
+}
+messy: "the real version" {
+  a: "start"
+  b: "detour"
+  c: "doubt"
+  hub: "type" {shape: circle}
+  done: "the thing\n(lumpy on purpose)" {shape: page; style.fill: "#ffe8a3"}
+  a -> hub
+  hub -> b
+  b -> hub: "back again"
+  hub -> c
+  c -> hub: "leave it anyway"
+  hub -> done
+}
+caption: "no friction = no fingerprints." {shape: text; style.italic: true; style.font-size: 22}
+caption.near: bottom-center

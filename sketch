@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# sketch — prefers the local venv (clypi styling), falls back to system python3
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$DIR/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3)"
+exec "$PY" "$DIR/cli.py" "$@"

@@ -1,0 +1,34 @@
+# "this article is written by a human being (obviously)"
+direction: right
+
+ai: "a language model" {
+  prompt: "prompt"
+  out: "glassy, frictionless output\n(confidence at 0.8 temperature)"
+  prompt -> out
+}
+
+human: "me, this morning" {
+  wake: "6:20am. 4 hours sleep.\nhate the ceiling for 10 min."
+  tea: "tea (out of milk).\nspill. wipe with sleeve."
+  stare: "open the doc.\nstare at nothing."
+  tabs: "15 min rearranging\ntabs i won't read"
+  type: "type" {shape: circle}
+  back: "backspace.\nswear."
+  doubt: "“is that too dramatic?”\n“cut the tea spill bit?”"
+  memory: "random memory of\nlast week's argument"
+  reply: "…still haven't replied\nto that message"
+  post: "the post\n(lumpy on purpose)" {shape: page; style.fill: "#ffe8a3"}
+
+  wake -> tea -> stare -> tabs -> type
+  type -> back
+  back -> type
+  type -> doubt
+  doubt -> type: "leave it anyway"
+  type -> memory
+  memory -> reply
+  reply -> type: "30 seconds lost"
+  type -> post
+}
+
+caption: "no friction = no fingerprints.\ni want fingerprints." {shape: text; style.font-size: 24; style.italic: true}
+caption.near: bottom-center

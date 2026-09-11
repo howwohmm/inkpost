@@ -1,0 +1,31 @@
+# "what/why this newsletter exists"
+direction: down
+
+loop: "motion without direction" {
+  style.stroke-dash: 5
+  style.fill: transparent
+  direction: right
+
+  borrow: "borrow a framework\n(from someone who looks\ncalm and successful online)"
+  works: "it works.\nfor a while."
+  busy: "wake up busy.\nstrangely unmoved."
+  faster: "“faster. optimize.\nscale. 10x.”"
+
+  borrow -> works -> busy -> faster
+  faster -> borrow: "level 1 → level 1.1.\nwheels spinning." {style.stroke-dash: 3}
+}
+
+pause: "pause.\nthe breath before the next sprint." {shape: oval; style.fill: "#ffe8a3"}
+loop.busy -> pause: "this newsletter\nexists here"
+
+path: "" {
+  style.stroke: transparent
+  style.fill: transparent
+  direction: right
+  question: "faster toward what, exactly?\noptimized for which life?"
+  sit: "live inside the question\nfor a while. let it simmer."
+  fewer: "choose fewer things.\nstay long enough to see."
+  progress: "real progress.\nquieter. rarer." {shape: circle}
+  question -> sit -> fewer -> progress
+}
+pause -> path.question

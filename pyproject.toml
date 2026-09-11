@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "inkpost"
+version = "0.1.0"
+description = "Turn a blog post into hand-drawn diagrams, from the terminal. d2 + TALA, sketch mode."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["diagrams", "d2", "blogging", "cli", "tala", "sketch", "illustration"]
+dependencies = []
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Graphics",
+  "Topic :: Text Processing :: Markup",
+  "Topic :: Utilities",
+]
+
+# the core install is stdlib only. `pip install "inkpost[pretty]"` adds clypi,
+# which the cli uses for boxes and spinners when it is importable and quietly
+# falls back to plain ansi when it is not.
+[project.optional-dependencies]
+# clypi itself needs python >= 3.11; on 3.9/3.10 the extra resolves to nothing
+# and the cli falls back to its own plain-ansi styling.
+pretty = ["clypi; python_version >= '3.11'"]
+
+[project.scripts]
+inkpost = "inkpost:main"
+inkpost-serve = "inkpost:serve"
+
+# ---------------------------------------------------------------- build
+# the modules stay flat at the repo root so `python3 server.py` and ./sketch
+# keep working. the wheel relocates them under inkpost/_impl/, which is where
+# inkpost/__init__.py looks for them first. patterns/preview/ (7.5 MB of
+# reference png) is deliberately left out, so the .d2 files are listed one by
+# one rather than by directory.
+[tool.hatch.build.targets.wheel]
+packages = ["inkpost"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"cli.py" = "inkpost/_impl/cli.py"
+"config.py" = "inkpost/_impl/config.py"
+"patterns.py" = "inkpost/_impl/patterns.py"
+"planner.py" = "inkpost/_impl/planner.py"
+"presets.py" = "inkpost/_impl/presets.py"
+"renderer.py" = "inkpost/_impl/renderer.py"
+"server.py" = "inkpost/_impl/server.py"
+"ui/index.html" = "inkpost/_impl/ui/index.html"
+"patterns/collage.d2" = "inkpost/_impl/patterns/collage.d2"
+"patterns/collapse.d2" = "inkpost/_impl/patterns/collapse.d2"
+"patterns/comic.d2" = "inkpost/_impl/patterns/comic.d2"
+"patterns/committee.d2" = "inkpost/_impl/patterns/committee.d2"
+"patterns/contrast.d2" = "inkpost/_impl/patterns/contrast.d2"
+"patterns/layers.d2" = "inkpost/_impl/patterns/layers.d2"
+"patterns/loop-exit.d2" = "inkpost/_impl/patterns/loop-exit.d2"
+"patterns/poster.d2" = "inkpost/_impl/patterns/poster.d2"
+"patterns/steps.d2" = "inkpost/_impl/patterns/steps.d2"
+"patterns/test.d2" = "inkpost/_impl/patterns/test.d2"
+
+[tool.hatch.build.targets.sdist]
+# everything tracked, minus the two heavy reference-image trees. .gitignore
+# already keeps runs/, .cache/, .venv/, .env and dist/ out. this is exclude-
+# based on purpose: a doc that gets renamed should not silently fall out of the
+# sdist.
+exclude = [
+  "/.github",
+  "/examples",
+  "/patterns/preview",
+]

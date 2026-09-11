@@ -1,0 +1,20 @@
+# collage: many inputs → one self → one exit
+direction: right
+inputs: "things i didn't choose" {
+  style.stroke-dash: 5
+  style.fill: transparent
+  i1: "input"
+  i2: "input"
+  i3: "input"
+  i4: "input"
+  i5: "input"
+}
+self: "“my” thing" {shape: cloud}
+inputs.i1 -> self
+inputs.i2 -> self
+inputs.i3 -> self
+inputs.i4 -> self
+inputs.i5 -> self
+strip: "strip the noise" {shape: hexagon}
+free: "the real question?" {shape: circle; style.fill: "#ffe8a3"; style.bold: true}
+self -> strip -> free

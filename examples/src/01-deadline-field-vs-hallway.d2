@@ -1,0 +1,30 @@
+# "why i only work when there's a deadline" — the core image
+direction: down
+
+field: "no deadline: the open field" {
+  style.stroke-dash: 5
+  style.fill: transparent
+
+  plan: "plan how to\ndo the work"
+  research: "research the\nperfect way"
+  systems: "build systems\nto help do it"
+  notion: "reorganise\nnotion"
+  yt: "youtube:\nproductivity systems"
+  versions: "too many versions\nof the thing"
+  futures: "too many\npossible futures"
+  here: "“should i even\nbe here?”"
+  guilt: "feel bad about\nnot doing the work"
+  meta: "thinking about\nthe thinking"
+  me: "me" {shape: circle; style.fill: "#ffe8a3"}
+  doors: "too many doors.\nopen the wrong one\nand it's a loss." 
+}
+
+hallway: "deadline: the hallway" {
+  direction: right
+  me: "me" {shape: circle; style.fill: "#ffe8a3"}
+  task: "the task"
+  clock: "the clock" {shape: circle}
+  me -> task -> clock
+}
+
+field -> hallway: "a due date.\nthe internal committee shuts up.\nthe field collapses into a hallway." {style.bold: true}

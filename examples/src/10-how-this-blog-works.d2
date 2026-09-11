@@ -1,0 +1,19 @@
+# "how this blog works" — the actual architecture
+direction: right
+
+ohm: "ohm" {shape: person}
+file: "one markdown file\ncontent/posts/YYYY-MM-DD-slug.md" {shape: page}
+draft: "draft: true?" {shape: diamond}
+local: "visible only when\nrunning locally"
+push: "git push" {shape: hexagon}
+build: "vercel build\n(vite: markdown → html)"
+live: "ohm.quest/blog/slug" {shape: cloud; style.fill: "#ffe8a3"}
+
+ohm -> file: "write"
+file -> draft
+draft -> local: "yes"
+draft -> push: "no"
+push -> build -> live
+
+nope: "no CMS. no database. no admin panel.\nno third-party account that can lock me out." {shape: text; style.italic: true}
+nope.near: bottom-center

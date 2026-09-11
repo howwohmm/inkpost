@@ -1,0 +1,18 @@
+direction: right
+me: "me" {shape: circle}
+field: "the open field" {style.stroke-dash: 5}
+task: "the task"
+clock: "the clock" {shape: circle}
+me -> field
+me -> task
+task -> clock
+
+scenarios: {
+  deadline: {
+    field.style.opacity: 0.2
+    (me -> field)[0].style.opacity: 0.2
+    (me -> task)[0].style.stroke-width: 5
+    task.style.fill: "#ffe8a3"
+    clock.style.fill: "#ffe8a3"
+  }
+}

@@ -1,0 +1,1263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>inkpost</title>
+<!--
+  inkpost — one file. vanilla js + css. no framework, no build, no CDN, no webfont,
+  no remote asset: a CDN would break the offline guarantee and this tool is meant
+  to run on a plane.
+
+  ROUTES (server.py is the contract — none of these is invented):
+    GET  /api/health   /api/modes   /api/posts   /api/runs?limit=
+    GET  /api/post?file=            -> {ok,title,description,raw,clean}
+    GET  /api/status?slug=          -> the BARE run.json manifest. there is no `ok`
+                                       key on success; only a failure carries
+                                       {ok:false,error}. so we test `j.ok === false`.
+    GET  /api/source?slug=&id=      -> {ok,d2,sha,edited,accents}
+    PUT  /api/source {slug,id,d2}   -> {ok,preflight:{ok,errors},rerendering}
+                                       rerendering:false means d2 refused it — the
+                                       text is kept and the errors are shown, and we
+                                       must NOT start polling.
+    POST /api/run      {text,title,modes,formats,backend,model} -> 202 {ok,slug}
+    POST /api/rerender {slug,id?,modes?,formats?}   POST /api/revert   POST /api/open
+    GET  /runs/<slug>/<rel>[?dl=1]  -> the asset. cell.path ALREADY carries the slug.
+
+  TWO THINGS THE BRIEF ASKED FOR THAT THE SERVER WILL NOT DO:
+  · a writable layout SELECT. no route accepts a layout override — the pattern owns
+    it via renderer.layout_for(). the detail view therefore shows a DISABLED select
+    carrying the row's resolved layout. faking a live control would lie.
+  · a distinct swatch per mode. `paper` and `blueprint` are both #ffffff, so every
+    swatch carries a hairline and its accent half, and the hover title disambiguates.
+
+  SECURITY: every string that came from a post, the model or a manifest is placed
+  with textContent. this file never assigns markup as a string.
+-->
+<style>
+/* ============================================================ tokens ===== */
+:root{
+  --paper:#f6f3ec; --surface:#fffdf7; --sunk:#efebe1;
+  --ink:#1b1916; --ink-2:#4a453d; --muted:#7c7468;
+  --rule:#e3ddd0; --rule-2:#cfc7b6;
+  --accent:#b8862b; --accent-soft:#ffe8a3; --accent-ink:#3a2a05;
+  --bad:#a83a2c; --bad-bg:#fbeae7;
+  --good:#3f6b48;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --top:52px; --rail:368px; --r:7px;
+  --shadow:0 1px 2px rgba(40,32,16,.06),0 6px 18px rgba(40,32,16,.05);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#121110; --surface:#1a1917; --sunk:#232120;
+    --ink:#eee8dc; --ink-2:#c2bbad; --muted:#8b8377;
+    --rule:#2c2a26; --rule-2:#3d3a34;
+    --accent:#e0b45f; --accent-soft:#ffe8a3; --accent-ink:#3a2a05;
+    --bad:#e8897a; --bad-bg:#2c1d1a;
+    --good:#8fc09a;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3);
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font:15px/1.55 var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+h1,h2,h3{font-weight:600; margin:0; letter-spacing:-.01em}
+a{color:inherit}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px}
+::selection{background:var(--accent-soft); color:var(--accent-ink)}
+
+/* ============================================================ topbar ===== */
+header.top{
+  position:sticky; top:0; z-index:40; height:var(--top);
+  display:flex; align-items:center; gap:14px; padding:0 18px;
+  background:var(--surface); border-bottom:1px solid var(--rule);
+}
+.brand{font-size:16px; font-weight:650; letter-spacing:-.02em}
+.brand .dot{color:var(--accent)}
+.tagline{color:var(--muted); font-size:12.5px; border-left:1px solid var(--rule);
+  padding-left:14px}
+.top .spacer{flex:1}
+.health{font:11.5px/1.4 var(--mono); color:var(--muted); text-align:right;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:42ch}
+.health.warn{color:var(--accent)}
+
+/* buttons ------------------------------------------------------------- */
+button{font:inherit; color:inherit; cursor:pointer}
+.btn{
+  background:var(--surface); border:1px solid var(--rule-2); border-radius:var(--r);
+  padding:5px 11px; font-size:12.5px; line-height:1.5;
+  transition:background .12s,border-color .12s,transform .08s;
+}
+.btn:hover:not(:disabled){background:var(--sunk); border-color:var(--muted)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{opacity:.45; cursor:not-allowed}
+.btn.primary{
+  background:var(--ink); color:var(--paper); border-color:var(--ink);
+  font-weight:550; padding:10px 14px; font-size:14px; width:100%;
+}
+.btn.primary:hover:not(:disabled){background:var(--ink-2); border-color:var(--ink-2)}
+.btn.primary:disabled{cursor:wait}
+.lnk{background:none; border:0; padding:0; font-size:12px; color:var(--muted);
+  text-decoration:underline; text-underline-offset:2px}
+.lnk:hover{color:var(--ink)}
+
+/* ============================================================= shell ===== */
+.shell{display:grid; grid-template-columns:var(--rail) minmax(0,1fr); align-items:start}
+body.narrow .shell{grid-template-columns:minmax(0,1fr)}
+body.narrow aside.rail{display:none}
+
+aside.rail{
+  position:sticky; top:var(--top); height:calc(100vh - var(--top));
+  overflow-y:auto; overscroll-behavior:contain;
+  border-right:1px solid var(--rule); background:var(--surface);
+  padding:18px 18px 40px; min-width:0;
+}
+.field{margin-bottom:18px}
+.field > label,.grouplabel{
+  display:block; font-size:11px; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); margin-bottom:7px;
+}
+input[type=text],select,textarea{
+  width:100%; font:inherit; color:var(--ink); background:var(--paper);
+  border:1px solid var(--rule-2); border-radius:var(--r); padding:8px 10px;
+}
+input[type=text]:focus,select:focus,textarea:focus{
+  outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(184,134,43,.18);
+}
+textarea{font:13px/1.6 var(--mono); resize:vertical; white-space:pre-wrap}
+textarea#text{min-height:190px}
+textarea#text.drop{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink)}
+select{appearance:none; padding-right:26px;
+  background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                   linear-gradient(135deg,currentColor 50%,transparent 50%);
+  background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;
+  background-size:5px 5px,5px 5px; background-repeat:no-repeat}
+.two{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+
+/* post picker ---------------------------------------------------------- */
+.posts{max-height:196px; overflow-y:auto; border:1px solid var(--rule);
+  border-radius:var(--r); background:var(--paper)}
+.posts .row{display:block; width:100%; text-align:left; background:none; border:0;
+  border-bottom:1px solid var(--rule); padding:8px 10px}
+.posts .row:last-child{border-bottom:0}
+.posts .row:hover,.posts .row[aria-current=true]{background:var(--sunk)}
+.posts .row[aria-current=true]{box-shadow:inset 3px 0 0 var(--accent)}
+.posts .t{font-size:13px; display:block; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap}
+.posts .m{font:10.5px/1.5 var(--mono); color:var(--muted)}
+
+/* mode + format chips -------------------------------------------------- */
+.chips{display:flex; flex-wrap:wrap; gap:6px}
+.chip{
+  display:inline-flex; align-items:center; gap:7px;
+  background:var(--paper); border:1px solid var(--rule-2); border-radius:20px;
+  padding:4px 11px 4px 5px; font-size:12.5px; line-height:1.6;
+}
+.chip:hover:not(:disabled){border-color:var(--muted)}
+.chip[aria-pressed=true]{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.chip.fmt{padding:4px 11px}
+.chip:disabled{opacity:.45; cursor:not-allowed}
+.sw{width:14px; height:14px; border-radius:50%; flex:none;
+  border:1px solid rgba(120,110,90,.55); box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+
+/* log ------------------------------------------------------------------ */
+.log{height:112px; overflow-y:auto; background:var(--paper);
+  border:1px solid var(--rule); border-radius:var(--r); padding:8px 10px;
+  font:11px/1.65 var(--mono); color:var(--muted)}
+.log b{color:var(--ink-2); font-weight:400}
+.hint{font-size:11.5px; color:var(--muted); margin-top:7px}
+
+/* recent runs ---------------------------------------------------------- */
+.runs{display:flex; flex-direction:column; gap:2px}
+.runs .row{display:flex; gap:9px; align-items:center; width:100%; text-align:left;
+  background:none; border:0; border-radius:var(--r); padding:6px 7px}
+.runs .row:hover{background:var(--sunk)}
+.runs img{width:36px; height:36px; object-fit:cover; border-radius:4px; flex:none;
+  border:1px solid var(--rule-2); background:#fff}
+.runs .ph{width:36px; height:36px; border-radius:4px; flex:none; background:var(--sunk);
+  border:1px solid var(--rule)}
+.runs .t{font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.runs .m{font:10.5px/1.4 var(--mono); color:var(--muted)}
+
+/* ============================================================= stage ===== */
+main.stage{padding:26px 30px 90px; min-width:0}
+.railtoggle{display:none}
+body.narrow .railtoggle{display:inline-block}
+
+.runhead{display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 14px;
+  margin-bottom:6px}
+.runhead h2{font-size:23px; letter-spacing:-.02em}
+.pill{font:10.5px/1 var(--mono); text-transform:uppercase; letter-spacing:.08em;
+  border:1px solid var(--rule-2); border-radius:20px; padding:4px 9px; color:var(--muted)}
+.pill.live{border-color:var(--accent); color:var(--accent)}
+.pill.err{border-color:var(--bad); color:var(--bad)}
+.pill.ok{border-color:var(--rule-2); color:var(--good)}
+.substats{font:11.5px/1.7 var(--mono); color:var(--muted); margin-bottom:18px}
+.substats .path{user-select:all}
+.stageacts{display:flex; gap:7px; flex-wrap:wrap; margin-bottom:20px}
+
+/* empty / planning / error --------------------------------------------- */
+.panel{border:1px solid var(--rule); background:var(--surface); border-radius:10px;
+  padding:22px 24px; box-shadow:var(--shadow)}
+.empty{max-width:52ch}
+.empty h2{font-size:20px; margin-bottom:8px}
+.empty p{color:var(--ink-2); font-size:14px; margin:0 0 10px}
+.empty ol{color:var(--muted); font-size:13px; padding-left:18px; margin:0; line-height:1.9}
+.working{display:flex; align-items:center; gap:12px; font:13px/1.5 var(--mono)}
+.working .caret{color:var(--accent); animation:blink 1.05s step-start infinite}
+@keyframes blink{50%{opacity:0}}
+.errbox{border:1px solid var(--bad); border-left-width:4px; background:var(--bad-bg);
+  border-radius:var(--r); padding:14px 16px; margin-bottom:20px}
+.errbox h3{font-size:13px; color:var(--bad); margin-bottom:5px}
+.errbox p{margin:0 0 9px; font:12.5px/1.6 var(--mono); color:var(--ink-2);
+  white-space:pre-wrap; overflow-wrap:anywhere}
+.warn{font-size:12px; color:var(--accent); margin-bottom:10px}
+
+/* legend --------------------------------------------------------------- */
+.legend{display:flex; flex-wrap:wrap; gap:12px; align-items:center;
+  font:11px/1 var(--mono); color:var(--muted); margin-bottom:14px;
+  padding-bottom:12px; border-bottom:1px solid var(--rule)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+
+/* =========================================================== gallery ===== */
+.diagram{margin-bottom:34px}
+.drow{display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 12px; margin-bottom:9px}
+.badge{font:10px/1 var(--mono); text-transform:uppercase; letter-spacing:.1em;
+  border:1px solid var(--ink); border-radius:3px; padding:4px 6px}
+.badge.soft{border-color:var(--rule-2); color:var(--muted)}
+.badge.red{border-color:var(--bad); color:var(--bad)}
+.dtitle{font-size:16px; font-weight:600}
+.dmove{font-size:13px; font-style:italic; color:var(--muted); flex:1 1 240px; min-width:0}
+.dacts{display:flex; gap:6px; flex-wrap:wrap}
+
+.cells{display:grid; gap:12px; overflow-x:auto; padding-bottom:4px; scrollbar-width:thin}
+.cell{display:flex; flex-direction:column; min-width:0}
+.frame{
+  /* the box takes the DIAGRAM's own shape (--ar is set from the first png that
+     loads in the row), so a 2500x700 taxonomy gets a short row and a 3000x5000
+     collage gets a tall one — no acre of dead letterbox either way. */
+  position:relative; aspect-ratio:var(--ar,5/4); min-height:210px; max-height:540px;
+  border:1px solid var(--rule-2); border-radius:var(--r);
+  overflow:hidden; display:block; width:100%; padding:0; background:var(--sunk);
+  cursor:zoom-in; transition:border-color .12s,box-shadow .12s;
+}
+.frame:hover{border-color:var(--accent); box-shadow:var(--shadow)}
+.frame img{width:100%; height:100%; object-fit:contain; display:block}
+.frame .skel{position:absolute; inset:0; background:linear-gradient(100deg,
+  var(--sunk) 20%, var(--rule) 40%, var(--sunk) 60%); background-size:280% 100%;
+  animation:shimmer 1.5s linear infinite}
+@keyframes shimmer{from{background-position:180% 0}to{background-position:-80% 0}}
+.frame .tag{position:absolute; left:9px; bottom:9px; font:10px/1 var(--mono);
+  background:rgba(20,18,16,.74); color:#f4efe4; padding:4px 7px; border-radius:3px;
+  letter-spacing:.06em}
+.frame.pend{cursor:default}
+.frame.pend .tag{background:rgba(20,18,16,.55)}
+.frame.bad{background:var(--bad-bg); border-color:var(--bad); cursor:pointer;
+  display:flex; flex-direction:column; justify-content:center; gap:6px; padding:16px;
+  text-align:left}
+.frame.bad .ttl{font:11px/1.4 var(--mono); color:var(--bad); letter-spacing:.06em}
+.frame.bad .msg{font:11.5px/1.5 var(--mono); color:var(--ink-2); overflow:hidden;
+  display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical}
+.cap{display:flex; align-items:baseline; gap:8px; padding:6px 2px 0; flex-wrap:wrap}
+.cap .mode{font-size:12px; font-weight:550}
+.cap .ms{font:10px/1 var(--mono); color:var(--muted); margin-left:auto}
+.cap a{font:10.5px/1 var(--mono); color:var(--muted); text-decoration:none;
+  border-bottom:1px solid var(--rule-2)}
+.cap a:hover{color:var(--accent); border-color:var(--accent)}
+
+/* ============================================================ detail ===== */
+dialog.detail{
+  border:0; padding:0; max-width:none; max-height:none; width:100vw; height:100vh;
+  background:var(--paper); color:var(--ink);
+}
+dialog.detail::backdrop{background:rgba(16,14,12,.82)}
+.dv{display:grid; grid-template-rows:auto minmax(0,1fr); height:100%}
+.dvtop{display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:10px 16px; border-bottom:1px solid var(--rule); background:var(--surface)}
+.dvtop .who{font:12px/1.4 var(--mono); color:var(--muted)}
+.dvtop .who b{color:var(--ink); font-weight:600}
+.modestrip{display:flex; gap:5px; flex-wrap:wrap}
+.mtab{display:inline-flex; align-items:center; gap:6px; font-size:12px;
+  border:1px solid var(--rule-2); background:var(--paper); border-radius:20px;
+  padding:3px 10px 3px 4px}
+.mtab[aria-current=true]{background:var(--ink); color:var(--paper); border-color:var(--ink)}
+.mtab:disabled{opacity:.4}
+.dvbody{display:grid; grid-template-columns:minmax(0,1fr) 460px; min-height:0}
+.dvbody.wide{grid-template-columns:minmax(0,1fr)}
+.dvimg{position:relative; display:grid; place-items:center; min-width:0; min-height:0;
+  padding:20px; background:var(--sunk); overflow:auto; cursor:zoom-in}
+/* absolute + four insets + margin:auto is the one centring that reliably resolves
+   a percentage max-height against the pane, so a 5000px-tall png always fits. */
+.dvimg img{position:absolute; top:20px; left:20px; right:20px; bottom:20px; margin:auto;
+  width:auto; height:auto; max-width:calc(100% - 40px); max-height:calc(100% - 40px);
+  object-fit:contain; box-shadow:0 3px 24px rgba(0,0,0,.22)}
+.dvimg.zoom{place-items:start center; cursor:zoom-out}
+.dvimg.zoom img{position:static; max-width:none; max-height:none}
+.dvimg .none{font:12px/1.6 var(--mono); color:var(--muted); text-align:center}
+.dvside{border-left:1px solid var(--rule); background:var(--surface);
+  overflow-y:auto; padding:16px; min-width:0}
+.dvbody.wide .dvside{display:none}
+.sect{margin-bottom:16px}
+.sect h4{font-size:10.5px; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--muted); margin-bottom:7px}
+.kv{font:11.5px/1.8 var(--mono); color:var(--ink-2)}
+.kv .k{color:var(--muted); display:inline-block; min-width:8ch}
+.dlrow{display:flex; gap:8px; flex-wrap:wrap}
+.dlrow a{font:11px/1 var(--mono); border:1px solid var(--rule-2); border-radius:var(--r);
+  padding:6px 10px; text-decoration:none; color:var(--ink-2)}
+.dlrow a:hover{border-color:var(--accent); color:var(--accent)}
+
+/* source editor -------------------------------------------------------- */
+.edit{display:grid; grid-template-columns:auto minmax(0,1fr);
+  border:1px solid var(--rule-2); border-radius:var(--r); overflow:hidden;
+  background:var(--paper)}
+.edit:focus-within{border-color:var(--accent); box-shadow:0 0 0 3px rgba(184,134,43,.18)}
+.gut{font:12px/1.6 var(--mono); color:var(--muted); text-align:right; padding:9px 7px;
+  background:var(--sunk); user-select:none; overflow:hidden; white-space:pre}
+.gut .bad{color:var(--bad); font-weight:700}
+.edit textarea{border:0; border-radius:0; background:var(--paper); min-height:260px;
+  padding:9px 10px; font-size:12px; white-space:pre; overflow-x:auto}
+.edit textarea:focus{box-shadow:none}
+.errlist{margin-top:8px; display:flex; flex-direction:column; gap:4px}
+.errlist button{display:block; width:100%; text-align:left; background:var(--bad-bg);
+  border:1px solid var(--bad); border-radius:4px; padding:5px 8px;
+  font:11px/1.5 var(--mono); color:var(--ink)}
+.saveline{display:flex; align-items:center; gap:8px; margin-top:9px; flex-wrap:wrap}
+.saveline .note{font:11px/1.5 var(--mono); color:var(--muted)}
+.saveline .note.ok{color:var(--good)}
+.saveline .note.bad{color:var(--bad)}
+
+/* ============================================================ toast ===== */
+.toast{position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:90;
+  background:var(--ink); color:var(--paper); border-radius:var(--r);
+  padding:9px 15px; font-size:13px; box-shadow:var(--shadow); max-width:80vw}
+.toast.bad{background:var(--bad)}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0);
+  white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+@media (max-width:1080px){ .dvbody{grid-template-columns:minmax(0,1fr)}
+  .dvside{border-left:0; border-top:1px solid var(--rule)} .dv{overflow-y:auto} }
+</style>
+</head>
+<body>
+
+<!-- ================================================================ topbar -->
+<header class="top">
+  <span class="brand">inkpost<span class="dot">.</span></span>
+  <span class="tagline">a post, drawn by hand</span>
+  <button class="btn railtoggle" id="railtoggle" aria-expanded="false">controls</button>
+  <span class="spacer"></span>
+  <span class="health" id="health" role="status">connecting…</span>
+  <button class="btn" id="reveal" hidden>reveal in finder</button>
+</header>
+
+<div class="shell">
+
+  <!-- ============================================================== rail -->
+  <aside class="rail" id="rail" aria-label="compose and controls">
+
+    <div class="field">
+      <span class="grouplabel" id="postslabel">a post</span>
+      <div class="posts" id="posts" role="listbox" aria-labelledby="postslabel"></div>
+      <div style="margin-top:7px"><button class="lnk" id="paste">or paste your own →</button></div>
+    </div>
+
+    <div class="field">
+      <label for="title">title</label>
+      <input type="text" id="title" placeholder="what is this post called"
+             autocomplete="off" spellcheck="false">
+    </div>
+
+    <div class="field">
+      <label for="text">post markdown</label>
+      <textarea id="text" placeholder="paste a post, pick one above, or drop a .md file here."
+                spellcheck="false"></textarea>
+      <details style="margin-top:7px">
+        <summary style="font-size:11.5px;color:var(--muted);cursor:pointer">cleaned body — what the planner sees</summary>
+        <pre id="clean" style="font:11px/1.6 var(--mono);color:var(--muted);white-space:pre-wrap;
+             max-height:170px;overflow:auto;margin:7px 0 0"></pre>
+      </details>
+    </div>
+
+    <div class="field">
+      <span class="grouplabel" id="modeslabel">modes</span>
+      <div class="chips" id="modes" role="group" aria-labelledby="modeslabel"></div>
+    </div>
+
+    <div class="field">
+      <span class="grouplabel" id="fmtslabel">formats</span>
+      <div class="chips" id="fmts" role="group" aria-labelledby="fmtslabel"></div>
+    </div>
+
+    <div class="field two">
+      <div>
+        <label for="backend">backend</label>
+        <select id="backend"></select>
+      </div>
+      <div>
+        <label for="model">model</label>
+        <select id="model"></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <button class="btn primary" id="go">sketch it</button>
+      <p class="hint" id="hint">planning takes 15–90s. rendering is parallel and cached — the
+        same post again is instant.</p>
+    </div>
+
+    <div class="field" id="logwrap" hidden>
+      <span class="grouplabel">progress</span>
+      <div class="log" id="log" role="log" aria-live="polite" aria-label="run progress"></div>
+    </div>
+
+    <div class="field">
+      <span class="grouplabel" id="runslabel">recent runs</span>
+      <div class="runs" id="runs" aria-labelledby="runslabel"></div>
+    </div>
+  </aside>
+
+  <!-- ============================================================= stage -->
+  <main class="stage" id="stage">
+    <div class="panel empty" id="empty">
+      <h2>nothing drawn yet</h2>
+      <p>paste a post — or pick one on the left — and inkpost will read it, choose two to four
+         diagram patterns, and fill them with your own sentences.</p>
+      <ol>
+        <li>pick a post</li>
+        <li>tick the aesthetic modes you want to compare</li>
+        <li>press <b>sketch it</b> — ⌘↵ works from the textarea</li>
+      </ol>
+    </div>
+    <div id="live"></div>
+  </main>
+</div>
+
+<!-- ================================================================ detail -->
+<dialog class="detail" id="dv" aria-label="diagram detail"></dialog>
+
+<script>
+"use strict";
+/* ==========================================================================
+   0. tiny dom + fetch helpers. nothing here ever assigns markup as a string.
+   ========================================================================== */
+const $  = (id) => document.getElementById(id);
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined && text !== null) n.textContent = String(text);
+  return n;
+};
+const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); return n; };
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }
+              catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+async function api(path) {
+  const r = await fetch(path, { headers: { accept: "application/json" } });
+  return r.json();
+}
+async function send(method, path, body) {
+  const r = await fetch(path, { method, headers: { "content-type": "application/json" },
+                                body: JSON.stringify(body) });
+  return r.json();
+}
+const post = (p, b) => send("POST", p, b);
+const put  = (p, b) => send("PUT", p, b);
+const asset = (path, q) => "/runs/" + path.split("/").map(encodeURIComponent).join("/") + (q || "");
+function toast(msg, bad) {
+  const t = el("div", "toast" + (bad ? " bad" : ""), msg);
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), bad ? 6000 : 2800);
+}
+
+/* ==========================================================================
+   1. state. one MODES payload, one RUN manifest, and the ui is a pure
+      function of them. every repaint rebuilds from these.
+   ========================================================================== */
+let MODES = null;            // /api/modes payload
+let HEALTH = null;           // /api/health payload
+let RUN = null;              // the bare run.json manifest from /api/status
+let SEL = [];                // ticked mode names
+let FMT = ["png", "svg"];    // ticked formats (png is forced on by the server)
+let DETAIL = null;           // {id, mode, fmt} while the dialog is open
+let SRC = null;              // {id, d2, sha, accents, errors, dirty}
+let TIMER = null, MISSES = 0, STARTED = 0, BUSY = false, LASTSIG = "";
+const NON_TERMINAL = ["queued", "planning", "assembling", "rendering"];
+const FMT_EXT = { png: ".png", svg: ".svg", gif: ".gif" };
+
+const modeInfo = (m) => (MODES && MODES.modes[m]) || { swatch: "#fff", accent: {}, note: "" };
+/* the chip's dot is the mode's own paper diagonally split with its accent, so
+   picking a mode is a colour decision and not a word one. */
+function swatch(mode) {
+  const i = modeInfo(mode), n = el("span", "sw");
+  n.style.background = "linear-gradient(135deg," + i.swatch + " 0 50%," +
+                       ((i.accent && i.accent.fill) || i.swatch) + " 50% 100%)";
+  return n;
+}
+/* one button factory — every action row in this file uses it. */
+function mkBtn(parent, cls, label, fn, title) {
+  const b = el("button", cls, label); b.type = "button";
+  if (title) b.title = title;
+  b.addEventListener("click", fn); parent.appendChild(b); return b;
+}
+const orderedModes = (list) => (MODES ? MODES.order.filter((m) => list.includes(m)) : list);
+/* the columns of the gallery: every mode that actually has a cell on disk,
+   in MODE_ORDER. reopening a run therefore shows yesterday's modes too. */
+function columns() {
+  const seen = new Set();
+  for (const d of (RUN && RUN.diagrams) || [])
+    for (const c of d.cells || []) seen.add(c.mode);
+  const list = orderedModes([...seen]);
+  if (list.length) return list;
+  return orderedModes((RUN && RUN.modes && RUN.modes.length) ? RUN.modes : SEL);
+}
+const cellOf = (row, mode, fmt) =>
+  (row.cells || []).find((c) => c.mode === mode && c.fmt === fmt) || null;
+
+/* ==========================================================================
+   2. rail — health, posts, runs, chips, selects
+   ========================================================================== */
+async function loadHealth() {
+  try { HEALTH = await api("/api/health"); } catch (e) { $("health").textContent = "server unreachable"; return; }
+  const h = $("health"), mock = HEALTH.backend === "mock";
+  h.textContent = mock
+    ? "mock plans — no api key, no claude cli"
+    : "d2 " + HEALTH.d2 + " · " + HEALTH.backend + " · " + (HEALTH.backend_reason || "");
+  h.className = "health" + (mock ? " warn" : "");
+}
+
+async function loadPosts() {
+  const box = clear($("posts"));
+  let j; try { j = await api("/api/posts"); } catch (e) { return; }
+  if (!j.posts || !j.posts.length) {
+    box.appendChild(el("div", "m", "  no posts/ folder — paste instead")); return;
+  }
+  for (const p of j.posts) {
+    const b = el("button", "row");
+    b.type = "button"; b.setAttribute("role", "option"); b.dataset.file = p.file;
+    b.appendChild(el("span", "t", p.title));
+    b.appendChild(el("span", "m", p.date + " · " + p.bytes + "b"));
+    b.addEventListener("click", () => openPost(p.file));
+    box.appendChild(b);
+  }
+}
+
+async function openPost(file) {
+  let j; try { j = await api("/api/post?file=" + encodeURIComponent(file)); } catch (e) { return; }
+  if (j.ok === false) { toast(j.error || "could not read that post", true); return; }
+  $("text").value = j.raw; $("title").value = j.title || "";
+  $("clean").textContent = j.clean || "";
+  for (const b of $("posts").children)
+    b.setAttribute("aria-current", String(b.dataset.file === file));
+  countLabel();
+}
+
+async function loadRuns() {
+  const box = clear($("runs"));
+  let j; try { j = await api("/api/runs?limit=20"); } catch (e) { return; }
+  if (!j.runs || !j.runs.length) { box.appendChild(el("div", "m", "nothing yet")); return; }
+  for (const r of j.runs) {
+    const b = el("button", "row"); b.type = "button";
+    if (r.thumb) {
+      const im = el("img"); im.src = asset(r.thumb); im.alt = ""; im.loading = "lazy";
+      b.appendChild(im);
+    } else b.appendChild(el("span", "ph"));
+    const t = el("div"); t.style.minWidth = "0";
+    t.appendChild(el("div", "t", r.title));
+    t.appendChild(el("div", "m", (r.created || "").slice(0, 10) + " · " +
+      r.n_diagrams + " diagrams · " + (r.modes || []).length + " modes" +
+      (r.state === "error" ? " · error" : "")));
+    b.appendChild(t);
+    b.addEventListener("click", () => reopen(r.slug));
+    box.appendChild(b);
+  }
+}
+
+function modeChips() {
+  const box = clear($("modes"));
+  for (const name of MODES.order) {
+    const m = MODES.modes[name];
+    const b = el("button", "chip"); b.type = "button";
+    b.setAttribute("aria-pressed", String(SEL.includes(name)));
+    b.title = m.note || name;
+    b.appendChild(swatch(name));
+    b.appendChild(el("span", null, name));
+    b.addEventListener("click", () => {
+      const i = SEL.indexOf(name);
+      if (i >= 0) { if (SEL.length > 1) SEL.splice(i, 1); } else SEL.push(name);
+      SEL = orderedModes(SEL);
+      ls.set("sketch.modes", SEL); modeChips(); countLabel();
+    });
+    box.appendChild(b);
+  }
+}
+
+function fmtChips() {
+  const box = clear($("fmts"));
+  for (const f of ["png", "svg", "gif"]) {
+    const b = el("button", "chip fmt", f); b.type = "button";
+    b.setAttribute("aria-pressed", String(FMT.includes(f)));
+    if (f === "png") { b.disabled = true; b.title = "png is always rendered"; }
+    if (f === "gif") b.title = "only steps diagrams render a gif — other rows skip it";
+    b.addEventListener("click", () => {
+      const i = FMT.indexOf(f);
+      if (i >= 0) FMT.splice(i, 1); else FMT.push(f);
+      ls.set("sketch.formats", FMT); fmtChips();
+    });
+    box.appendChild(b);
+  }
+}
+
+function selects() {
+  const s = $("backend"); clear(s);
+  const auto = el("option", null, "auto → " + MODES.default_backend); auto.value = "auto";
+  s.appendChild(auto);
+  for (const b of MODES.backends) {
+    const o = el("option", null, b + (HEALTH && HEALTH.backends[b] !== "ready"
+      ? " (" + (HEALTH ? HEALTH.backends[b] : "?") + ")" : ""));
+    o.value = b; s.appendChild(o);
+  }
+  s.value = ls.get("sketch.backend", "auto");
+  s.addEventListener("change", () => ls.set("sketch.backend", s.value));
+
+  const m = $("model"); clear(m);
+  const a = el("option", null, "auto — walk the chain"); a.value = ""; m.appendChild(a);
+  for (const name of MODES.chain || []) { const o = el("option", null, name); o.value = name; m.appendChild(o); }
+  if (MODES.claude_model) {
+    const o = el("option", null, MODES.claude_model + " (claude-code)");
+    o.value = MODES.claude_model; m.appendChild(o);
+  }
+  m.value = ls.get("sketch.model", "");
+  m.addEventListener("change", () => ls.set("sketch.model", m.value));
+}
+
+function countLabel() {
+  const n = RUN && RUN.diagrams && RUN.diagrams.length ? RUN.diagrams.length : 3;
+  const exact = RUN && RUN.diagrams && RUN.diagrams.length;
+  $("go").textContent = BUSY ? "sketching…"
+    : "sketch it → " + (exact ? "" : "~") + n + " diagrams × " + SEL.length +
+      " mode" + (SEL.length === 1 ? "" : "s");
+}
+
+/* ==========================================================================
+   3. run + poll
+   ========================================================================== */
+async function go() {
+  const text = $("text").value.trim();
+  if (!text) { $("text").focus(); toast("paste a post first", true); return; }
+  BUSY = true; $("go").disabled = true; countLabel();
+  const body = { text, title: $("title").value.trim() || null, modes: SEL, formats: FMT,
+                 backend: $("backend").value, model: $("model").value || null };
+  let j;
+  try { j = await post("/api/run", body); }
+  catch (e) { BUSY = false; $("go").disabled = false; countLabel();
+              toast("could not reach the server", true); return; }
+  if (j.ok === false || !j.slug) {
+    BUSY = false; $("go").disabled = false; countLabel();
+    toast(j.error || "the run was refused", true); return;
+  }
+  RUN = null; LASTSIG = ""; STARTED = Date.now(); $("logwrap").hidden = false;
+  startPoll(j.slug);
+}
+
+function stopPoll() { if (TIMER) { clearInterval(TIMER); TIMER = null; } }
+
+function startPoll(slug, quiet) {
+  stopPoll(); MISSES = 0;
+  if (!quiet) STARTED = Date.now();
+  const tick = async () => {
+    let j;
+    try { j = await api("/api/status?slug=" + encodeURIComponent(slug)); }
+    catch (e) {
+      /* never spin forever: three misses in a row and we say so and stop. */
+      if (++MISSES >= 3) { stopPoll(); BUSY = false; $("go").disabled = false;
+        RUN = RUN || { slug, title: slug, state: "error", diagrams: [], log: [],
+                       error: "lost contact with the server — is it still running?" };
+        RUN.state = "error"; RUN.error = "lost contact with the server — is it still running?";
+        paint(true); }
+      return;
+    }
+    MISSES = 0;
+    if (j.ok === false) { stopPoll(); BUSY = false; $("go").disabled = false;
+      toast(j.error || "no such run", true); return; }
+    RUN = j;
+    if (!NON_TERMINAL.includes(RUN.state)) {
+      stopPoll(); BUSY = false; $("go").disabled = false; loadRuns();
+    }
+    paint();
+  };
+  BUSY = true; $("go").disabled = true;
+  tick(); TIMER = setInterval(tick, 1000);
+}
+
+async function reopen(slug) {
+  let j; try { j = await api("/api/status?slug=" + encodeURIComponent(slug)); } catch (e) { return; }
+  if (j.ok === false) { toast(j.error || "no such run", true); return; }
+  RUN = j; LASTSIG = ""; $("logwrap").hidden = false;
+  if (RUN.modes && RUN.modes.length) { SEL = orderedModes(RUN.modes); modeChips(); }
+  paint(true);
+  if (NON_TERMINAL.includes(RUN.state)) startPoll(slug);
+  window.scrollTo({ top: 0 });
+}
+
+/* ==========================================================================
+   4. paint — run header, log, gallery
+   ========================================================================== */
+function elapsed() {
+  const s = Math.max(0, Math.floor((Date.now() - STARTED) / 1000));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+function cellStats() {
+  let done = 0, total = 0, cached = 0, ms = 0, bad = 0;
+  for (const d of RUN.diagrams || []) for (const c of d.cells || []) {
+    total++;
+    if (c.state === "done") { done++; ms += c.ms || 0; if (c.cached) cached++; }
+    if (c.state === "error") bad++;
+  }
+  return { done, total, cached, ms, bad };
+}
+/* a cheap signature so a 1s poll does not rebuild an unchanged gallery
+   (which would make every <img> flash). */
+function sig() {
+  const parts = [RUN.state, RUN.error || ""];
+  for (const d of RUN.diagrams || []) {
+    parts.push(d.id, d.status, d.src_sha, String(d.edited), String(d.gif));
+    for (const c of d.cells || []) parts.push(c.mode, c.fmt, c.state, c.path || "", c.bytes || 0);
+  }
+  return parts.join("|");
+}
+
+function paint(force) {
+  if (!RUN) return;
+  $("empty").hidden = true;
+  paintLog();
+  const s = sig();
+  if (!force && s === LASTSIG) { paintHeadOnly(); return; }
+  LASTSIG = s;
+
+  const live = clear($("live"));
+  live.appendChild(runHead());
+  if (RUN.error) live.appendChild(errorBlock());
+  for (const w of RUN.warnings || []) live.appendChild(el("div", "warn", "⚠ " + w));
+
+  const rows = RUN.diagrams || [];
+  /* the blinking panel belongs to the NON-TERMINAL states only. a terminal run
+     with nothing to show says so in words — it must never sit there pulsing. */
+  if (NON_TERMINAL.includes(RUN.state)) live.appendChild(workingPanel());
+  else if (!rows.length && !RUN.error)
+    live.appendChild(el("div", "panel", "this run finished without producing a diagram."));
+  if (rows.length) {
+    live.appendChild(legend());
+    for (const d of rows) live.appendChild(diagramSection(d));
+  }
+  $("reveal").hidden = false;
+  countLabel();
+  if (DETAIL) paintDetail();     /* keep an open dialog in step with the poll */
+}
+
+/* header only — called on an unchanged poll so the elapsed clock still moves */
+function paintHeadOnly() {
+  const w = $("live").querySelector(".workclock");
+  if (w) w.textContent = elapsed();
+}
+
+function runHead() {
+  const wrap = el("div");
+  const head = el("div", "runhead");
+  head.appendChild(el("h2", null, RUN.title || RUN.slug));
+  const st = el("span", "pill" + (RUN.state === "error" ? " err"
+    : NON_TERMINAL.includes(RUN.state) ? " live" : " ok"), RUN.state);
+  head.appendChild(st);
+  wrap.appendChild(head);
+
+  const c = cellStats(), p = RUN.planner || {};
+  const bits = [];
+  if (RUN.diagrams && RUN.diagrams.length)
+    bits.push(RUN.diagrams.map((d) => d.pattern).join(", "));
+  bits.push((RUN.diagrams || []).length + " diagrams × " + columns().length + " modes");
+  if (p.ms) bits.push("planned " + (p.ms / 1000).toFixed(1) + "s · " + (p.model || p.backend || ""));
+  if (c.total) bits.push("rendered " + c.done + "/" + c.total +
+    (c.cached ? " (" + c.cached + " cached)" : "") + (c.bad ? " · " + c.bad + " failed" : ""));
+  const sub = el("div", "substats", bits.join("  ·  ") + "  ·  ");
+  sub.appendChild(el("span", "path", "runs/" + RUN.slug + "/"));
+  wrap.appendChild(sub);
+
+  const acts = el("div", "stageacts");
+  const mk = (label, fn, title) => mkBtn(acts, "btn", label, fn, title);
+  if (RUN.diagrams && RUN.diagrams.length) {
+    mk("re-render everything", async () => {
+      await post("/api/rerender", { slug: RUN.slug }); startPoll(RUN.slug, true);
+    }, "no model call — d2 only");
+    const missing = SEL.filter((m) => !columns().includes(m));
+    if (missing.length) mk("add " + missing.join(", "), async () => {
+      await post("/api/rerender", { slug: RUN.slug, modes: SEL }); startPoll(RUN.slug, true);
+    }, "render the ticked modes into this run");
+  }
+  if (RUN.state === "error" && RUN.diagrams && RUN.diagrams.length)
+    mk("re-run from plan", async () => {
+      await post("/api/rerender", { slug: RUN.slug }); startPoll(RUN.slug, true);
+    }, "reuses plan.json — skips the model entirely");
+  if (acts.children.length) wrap.appendChild(acts);
+  return wrap;
+}
+
+function errorBlock() {
+  const b = el("div", "errbox");
+  b.appendChild(el("h3", null, "the run stopped"));
+  b.appendChild(el("p", null, RUN.error));
+  const t = String(RUN.error || "").toLowerCase();
+  if (t.includes("key") || t.includes("quota") || t.includes("rate")) {
+    mkBtn(b, "btn", "switch the backend to claude-code", () => {
+      $("backend").value = "claude-code"; ls.set("sketch.backend", "claude-code");
+      toast("backend set to claude-code");
+    }, "it needs no key and no quota");
+  }
+  return b;
+}
+
+function workingPanel() {
+  const p = el("div", "panel");
+  p.style.marginBottom = "22px";
+  const line = el("div", "working");
+  line.appendChild(el("span", "caret", "▍"));
+  const msg = { queued: "queued…", planning: "reading the post… choosing the moves…",
+                assembling: "checking the d2…", rendering: "rendering across the modes…" };
+  line.appendChild(el("span", null, msg[RUN.state] || RUN.state));
+  const pl = RUN.planner || {};
+  if (pl.model || pl.backend) line.appendChild(el("span", null, "· " + (pl.model || pl.backend)));
+  const clock = el("span", "workclock", elapsed());
+  clock.style.marginLeft = "auto"; clock.style.color = "var(--muted)";
+  line.appendChild(clock);
+  p.appendChild(line);
+  return p;
+}
+
+function legend() {
+  const wrap = el("div", "legend");
+  wrap.appendChild(el("span", null, "modes in this run:"));
+  for (const m of columns()) {
+    const s = el("span");
+    s.appendChild(swatch(m)); s.appendChild(el("span", null, m));
+    s.title = modeInfo(m).note || m;
+    wrap.appendChild(s);
+  }
+  return wrap;
+}
+
+function paintLog() {
+  const box = $("log"), lines = (RUN && RUN.log) || [];
+  if (box.childElementCount === lines.length) return;
+  clear(box);
+  for (const l of lines) {
+    const d = el("div");
+    d.appendChild(el("b", null, (l.t || "").slice(11) + " "));
+    d.appendChild(el("span", null, l.msg));
+    box.appendChild(d);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ------------------------------------------------------------- a diagram */
+function diagramSection(d) {
+  const sec = el("section", "diagram");
+  const head = el("div", "drow");
+  head.appendChild(el("span", "badge" + (d.status === "ok" ? "" : " red"), d.pattern));
+  head.appendChild(el("span", "dtitle", d.title || d.id));
+  if (d.move) head.appendChild(el("span", "dmove", d.move));
+  if (d.edited) head.appendChild(el("span", "badge soft", "edited"));
+
+  const acts = el("div", "dacts");
+  const mk = (label, fn, title) => mkBtn(acts, "btn", label, fn, title);
+  mk("source", () => openDetail(d.id, columns()[0]), "open the d2 and edit it");
+  mk("re-render row", async () => {
+    await post("/api/rerender", { slug: RUN.slug, id: d.id }); startPoll(RUN.slug, true);
+  });
+  /* the gif button exists ONLY on a steps source. a gif of a one-board diagram
+     is a silent single frame, so the affordance must not exist at all. */
+  if (d.gif) mk("render gif", async () => {
+    await post("/api/rerender", { slug: RUN.slug, id: d.id, formats: ["gif"] });
+    toast("rendering the gif…"); startPoll(RUN.slug, true);
+  }, "steps pattern — renders an animated gif");
+  head.appendChild(acts);
+  sec.appendChild(head);
+
+  if (d.status !== "ok" && (d.errors || []).length) {
+    const e = el("div", "errbox");
+    e.appendChild(el("h3", null, "this source did not compile"));
+    e.appendChild(el("p", null, d.errors.map(
+      (x) => "line " + x.line + " · col " + x.col + " · " + x.msg).join("\n")));
+    mkBtn(e, "btn", "open the source",
+          () => openDetail(d.id, columns()[0], d.errors[0].line));
+    sec.appendChild(e);
+  }
+
+  const cols = columns();
+  const grid = el("div", "cells");
+  grid.style.gridTemplateColumns = "repeat(" + cols.length + ",minmax(230px,1fr))";
+  for (const m of cols) grid.appendChild(cellNode(d, m));
+  sec.appendChild(grid);
+  /* every cell in a row is the same source, so one png's shape sizes them all */
+  const first = grid.querySelector("img");
+  if (first) {
+    const setAR = () => { if (first.naturalWidth)
+      grid.style.setProperty("--ar", first.naturalWidth + "/" + first.naturalHeight); };
+    if (first.complete) setAR(); else first.addEventListener("load", setAR, { once: true });
+  }
+  return sec;
+}
+
+function cellNode(d, mode) {
+  const wrap = el("div", "cell");
+  const png = cellOf(d, mode, "png");
+  const cap = el("div", "cap");
+  cap.appendChild(el("span", "mode", mode));
+
+  if (!png) {
+    const f = el("div", "frame pend");
+    f.appendChild(el("span", "tag", "not rendered in this mode"));
+    wrap.appendChild(f); wrap.appendChild(cap); return wrap;
+  }
+
+  if (png.state === "done" && png.path) {
+    const btn = el("button", "frame"); btn.type = "button";
+    btn.style.background = modeInfo(mode).swatch;
+    btn.setAttribute("aria-label", "open " + (d.title || d.id) + " in " + mode + " at full size");
+    const img = el("img");
+    img.src = asset(png.path, "?v=" + (d.src_sha || "") + "-" + (png.bytes || 0));
+    img.alt = (d.title || d.id) + " — a " + d.pattern + " diagram, " + mode + " mode";
+    btn.appendChild(img);
+    if (png.cached) btn.appendChild(el("span", "tag", "cached"));
+    btn.addEventListener("click", () => openDetail(d.id, mode));
+    wrap.appendChild(btn);
+
+    for (const f of ["png", "svg", "gif"]) {
+      const c = cellOf(d, mode, f);
+      if (!c || c.state !== "done" || !c.path) continue;
+      const a = el("a", null, f);
+      a.href = asset(c.path, "?dl=1"); a.download = "";
+      a.title = "download the " + f + " (" + Math.round((c.bytes || 0) / 1024) + " kb)";
+      cap.appendChild(a);
+    }
+    cap.appendChild(el("span", "ms", png.cached ? "cached" : (png.ms || 0) + "ms"));
+
+  } else if (png.state === "error") {
+    const btn = el("button", "frame bad"); btn.type = "button";
+    const first = (png.errors || [])[0] || {};
+    btn.appendChild(el("span", "ttl", "render failed" +
+      (first.line ? " · line " + first.line + " · col " + first.col : "")));
+    btn.appendChild(el("span", "msg", first.msg || "d2 refused this source"));
+    btn.addEventListener("click", () => openDetail(d.id, mode, first.line || 1));
+    wrap.appendChild(btn);
+    mkBtn(cap, "lnk", "retry", async () => {
+      await post("/api/rerender", { slug: RUN.slug, id: d.id, modes: [mode] });
+      startPoll(RUN.slug, true);
+    });
+
+  } else {
+    const f = el("div", "frame pend");
+    f.appendChild(el("div", "skel"));
+    f.appendChild(el("span", "tag", png.state === "rendering" ? "rendering…" : "queued"));
+    wrap.appendChild(f);
+  }
+  wrap.appendChild(cap);
+  return wrap;
+}
+
+/* ==========================================================================
+   5. the detail view — one dialog carrying the big image, the mode flip and
+      the d2 editor. <dialog> gives esc, the focus trap and the scrim free.
+   ========================================================================== */
+const dv = $("dv");
+dv.addEventListener("close", () => { DETAIL = null; SRC = null; });
+dv.addEventListener("click", (e) => { if (e.target === dv) dv.close(); });
+
+async function openDetail(id, mode, line) {
+  const cols = columns();
+  DETAIL = { id, mode: cols.includes(mode) ? mode : cols[0], fmt: "png", side: true, line };
+  SRC = null;
+  paintDetail();
+  if (!dv.open) dv.showModal();
+  await loadSource(id, line);
+}
+
+async function loadSource(id, line) {
+  let j;
+  try { j = await api("/api/source?slug=" + encodeURIComponent(RUN.slug) +
+                      "&id=" + encodeURIComponent(id)); }
+  catch (e) { return; }
+  if (j.ok === false) { SRC = { id, d2: "", error: j.error }; paintDetail(); return; }
+  SRC = { id, d2: j.d2, sha: j.sha, accents: j.accents, edited: j.edited, errors: [], note: "" };
+  paintDetail();
+  if (line) gotoLine(line);
+}
+
+function rowOf(id) { return (RUN.diagrams || []).find((d) => d.id === id) || null; }
+
+function paintDetail() {
+  if (!DETAIL) return;
+  const d = rowOf(DETAIL.id);
+  if (!d) { dv.close(); return; }
+  const cols = columns();
+  const shell = clear(dv).appendChild(el("div", "dv"));
+
+  /* --- top strip: who, the mode flip, format flip, close ---------------- */
+  const top = el("div", "dvtop");
+  const who = el("div", "who");
+  who.appendChild(el("b", null, d.id));
+  who.appendChild(el("span", null, " · " + (d.title || "")));
+  top.appendChild(who);
+
+  const strip = el("div", "modestrip");
+  for (const m of cols) {
+    const b = mkBtn(strip, "mtab", null, () => { DETAIL.mode = m; paintDetail(); },
+                    modeInfo(m).note || m);
+    b.setAttribute("aria-current", String(m === DETAIL.mode));
+    b.appendChild(swatch(m)); b.appendChild(el("span", null, m));
+  }
+  top.appendChild(strip);
+
+  const hasGif = !!cellOf(d, DETAIL.mode, "gif");
+  if (hasGif) mkBtn(top, "btn", DETAIL.fmt === "gif" ? "show png" : "play gif",
+    () => { DETAIL.fmt = DETAIL.fmt === "gif" ? "png" : "gif"; paintDetail(); });
+  const sp = el("span"); sp.style.flex = "1"; top.appendChild(sp);
+  mkBtn(top, "btn", DETAIL.side ? "hide source" : "show source",
+        () => { DETAIL.side = !DETAIL.side; paintDetail(); });
+  top.appendChild(el("span", "who", "← → modes   ↑ ↓ diagrams   esc closes"));
+  mkBtn(top, "btn", "close", () => dv.close());
+  shell.appendChild(top);
+
+  /* --- body: image | source -------------------------------------------- */
+  const body = el("div", "dvbody" + (DETAIL.side ? "" : " wide"));
+  const pane = el("div", "dvimg");
+  pane.style.background = modeInfo(DETAIL.mode).swatch;
+  const c = cellOf(d, DETAIL.mode, DETAIL.fmt) || cellOf(d, DETAIL.mode, "png");
+  if (c && c.state === "done" && c.path) {
+    const img = el("img");
+    img.src = asset(c.path, "?v=" + (d.src_sha || "") + "-" + (c.bytes || 0));
+    img.alt = (d.title || d.id) + " — a " + d.pattern + " diagram, " + DETAIL.mode + " mode";
+    pane.appendChild(img);
+  } else if (c && c.state === "error") {
+    pane.appendChild(el("div", "none", ((c.errors || [])[0] || {}).msg || "render failed"));
+  } else {
+    pane.appendChild(el("div", "none", c ? "still rendering…" : "not rendered in this mode"));
+  }
+  if (DETAIL.zoom) pane.classList.add("zoom");
+  pane.addEventListener("click", () => {
+    DETAIL.zoom = !DETAIL.zoom; pane.classList.toggle("zoom");
+  });
+  body.appendChild(pane);
+  body.appendChild(sidePane(d));
+  shell.appendChild(body);
+}
+
+function sidePane(d) {
+  const side = el("div", "dvside");
+
+  /* meta + the read-only layout control ---------------------------------- */
+  const s1 = el("div", "sect");
+  s1.appendChild(el("h4", null, "this diagram"));
+  const kv = el("div", "kv");
+  const line = (k, v) => { const r = el("div");
+    r.appendChild(el("span", "k", k)); r.appendChild(el("span", null, v)); kv.appendChild(r); };
+  line("pattern", d.pattern);
+  line("move", d.move || "—");
+  if (d.repairs) line("repairs", String(d.repairs));
+  if (SRC && SRC.accents !== undefined) line("accents", String(SRC.accents));
+  s1.appendChild(kv);
+  const lw = el("div"); lw.style.marginTop = "8px";
+  const ll = el("label", null, "layout"); ll.setAttribute("for", "layoutsel");
+  ll.style.cssText = "font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)";
+  lw.appendChild(ll);
+  const sel = el("select"); sel.id = "layoutsel"; sel.disabled = true;
+  sel.title = "the pattern owns the layout — renderer.layout_for() decides it, no route overrides it";
+  for (const v of ["tala", "dagre"]) { const o = el("option", null, v); o.value = v; sel.appendChild(o); }
+  sel.value = d.layout || "dagre";
+  lw.appendChild(sel);
+  lw.appendChild(el("div", "hint", "set by the " + d.pattern + " pattern — not overridable"));
+  s1.appendChild(lw);
+  side.appendChild(s1);
+
+  /* downloads ------------------------------------------------------------ */
+  const s2 = el("div", "sect");
+  s2.appendChild(el("h4", null, "download · " + DETAIL.mode));
+  const dl = el("div", "dlrow");
+  let any = false;
+  for (const f of ["png", "svg", "gif"]) {
+    const c = cellOf(d, DETAIL.mode, f);
+    if (!c || c.state !== "done" || !c.path) continue;
+    any = true;
+    const a = el("a", null, f + " · " + Math.round((c.bytes || 0) / 1024) + "kb");
+    a.href = asset(c.path, "?dl=1"); a.download = "";
+    dl.appendChild(a);
+  }
+  if (!any) dl.appendChild(el("span", "kv", "nothing rendered yet"));
+  s2.appendChild(dl);
+  side.appendChild(s2);
+
+  /* the editor ----------------------------------------------------------- */
+  const s3 = el("div", "sect");
+  const h = el("h4", null, "d2 source");
+  s3.appendChild(h);
+  if (!SRC) { s3.appendChild(el("div", "kv", "loading…")); side.appendChild(s3); return side; }
+  if (SRC.error) { s3.appendChild(el("div", "kv", SRC.error)); side.appendChild(s3); return side; }
+
+  const edit = el("div", "edit");
+  const gut = el("div", "gut");
+  const ta = el("textarea"); ta.id = "d2"; ta.spellcheck = false;
+  ta.setAttribute("aria-label", "d2 source for " + d.id);
+  ta.value = SRC.d2;
+  const badLines = new Set((SRC.errors || []).map((e) => e.line));
+  const syncGut = () => {
+    clear(gut);
+    const n = ta.value.split("\n").length;
+    for (let i = 1; i <= n; i++) {
+      const g = el("div", badLines.has(i) ? "bad" : null, String(i));
+      gut.appendChild(g);
+    }
+  };
+  ta.addEventListener("input", () => { SRC.d2 = ta.value; syncGut(); });
+  ta.addEventListener("scroll", () => { gut.scrollTop = ta.scrollTop; });
+  ta.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); saveSource(); }
+  });
+  edit.appendChild(gut); edit.appendChild(ta);
+  s3.appendChild(edit);
+  syncGut();
+
+  if ((SRC.errors || []).length) {
+    const list = el("div", "errlist");
+    for (const e of SRC.errors)
+      mkBtn(list, null, "line " + e.line + " · col " + e.col + " · " + e.msg,
+            () => gotoLine(e.line));
+    s3.appendChild(list);
+  }
+
+  const bar = el("div", "saveline");
+  const mk = (label, fn, title) => mkBtn(bar, "btn", label, fn, title);
+  mk("save + re-render", saveSource, "⌘↵");
+  mk("copy .d2", async () => {
+    try { await navigator.clipboard.writeText(SRC.d2); toast("d2 copied"); }
+    catch (err) { ta.select(); document.execCommand("copy"); toast("d2 copied"); }
+  });
+  mk("revert", async () => {
+    const j = await post("/api/revert", { slug: RUN.slug, id: d.id });
+    if (j.ok === false) { toast(j.error || "nothing to revert to", true); return; }
+    SRC.d2 = j.d2; SRC.errors = (j.preflight && j.preflight.errors) || [];
+    SRC.note = j.rerendering ? "reverted — re-rendering" : "reverted";
+    if (j.rerendering) startPoll(RUN.slug, true);
+    paintDetail();
+  }, "back to the model's original plan.json source");
+  if (SRC.note) bar.appendChild(el("span", "note" +
+    (SRC.noteBad ? " bad" : SRC.noteOk ? " ok" : ""), SRC.note));
+  s3.appendChild(bar);
+  side.appendChild(s3);
+  return side;
+}
+
+function gotoLine(line) {
+  const ta = $("d2"); if (!ta) return;
+  const lines = ta.value.split("\n");
+  let at = 0;
+  for (let i = 0; i < Math.min(line - 1, lines.length); i++) at += lines[i].length + 1;
+  ta.focus(); ta.setSelectionRange(at, at + (lines[line - 1] || "").length);
+  ta.scrollTop = Math.max(0, (line - 3) * 19);
+}
+
+async function saveSource() {
+  if (!SRC || !DETAIL) return;
+  const ta = $("d2"); if (ta) SRC.d2 = ta.value;
+  SRC.note = "saving…"; SRC.noteOk = SRC.noteBad = false; paintDetail();
+  let j;
+  try { j = await put("/api/source", { slug: RUN.slug, id: DETAIL.id, d2: SRC.d2 }); }
+  catch (e) { SRC.note = "could not reach the server"; SRC.noteBad = true; paintDetail(); return; }
+  if (j.ok === false) { SRC.note = j.error || "refused"; SRC.noteBad = true; paintDetail(); return; }
+  SRC.errors = (j.preflight && j.preflight.errors) || [];
+  /* rerendering:false means d2 refused it — keep every character, show why. */
+  if (j.rerendering) { SRC.note = "saved — re-rendering the row"; SRC.noteOk = true;
+                       startPoll(RUN.slug, true); }
+  else { SRC.note = "not saved for render — d2 rejected it. the text is untouched.";
+         SRC.noteBad = true; }
+  paintDetail();
+}
+
+/* ==========================================================================
+   6. keyboard
+   ========================================================================== */
+document.addEventListener("keydown", (e) => {
+  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName || ""));
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && e.target.id === "text") {
+    e.preventDefault(); if (!BUSY) go(); return;
+  }
+  if (!DETAIL || !dv.open || inField) return;
+  const d = rowOf(DETAIL.id); if (!d) return;
+  const cols = columns(), rows = (RUN.diagrams || []).map((r) => r.id);
+  if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+    e.preventDefault();
+    const i = cols.indexOf(DETAIL.mode);
+    DETAIL.mode = cols[(i + (e.key === "ArrowRight" ? 1 : cols.length - 1)) % cols.length];
+    paintDetail();
+  } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const i = rows.indexOf(DETAIL.id);
+    const next = rows[(i + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length];
+    openDetail(next, DETAIL.mode);
+  }
+});
+
+/* ==========================================================================
+   7. wiring + boot
+   ========================================================================== */
+$("go").addEventListener("click", () => { if (!BUSY) go(); });
+$("paste").addEventListener("click", () => {
+  $("text").value = ""; $("title").value = ""; $("clean").textContent = "";
+  for (const b of $("posts").children) b.setAttribute("aria-current", "false");
+  $("text").focus();
+});
+$("reveal").addEventListener("click", async () => {
+  if (!RUN) return;
+  const j = await post("/api/open", { slug: RUN.slug });
+  if (!j.ok) toast(j.error || "could not open it", true);
+});
+$("railtoggle").addEventListener("click", () => {
+  const on = document.body.classList.toggle("showrail");
+  $("rail").style.display = on ? "block" : "";
+  $("railtoggle").setAttribute("aria-expanded", String(on));
+});
+const TA = $("text");
+TA.addEventListener("dragover", (e) => { e.preventDefault(); TA.classList.add("drop"); });
+TA.addEventListener("dragleave", () => TA.classList.remove("drop"));
+TA.addEventListener("drop", (e) => {
+  e.preventDefault(); TA.classList.remove("drop");
+  const f = (e.dataTransfer.files || [])[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { TA.value = String(r.result);
+                     if (!$("title").value) $("title").value = f.name.replace(/\.md$/, ""); };
+  r.readAsText(f);
+});
+const fitRail = () => document.body.classList.toggle("narrow", window.innerWidth < 900);
+window.addEventListener("resize", fitRail); fitRail();
+
+(async function boot() {
+  try { MODES = await api("/api/modes"); }
+  catch (e) { $("health").textContent = "cannot reach the server"; return; }
+  SEL = (ls.get("sketch.modes", null) || MODES.default_modes || ["paper"])
+          .filter((m) => MODES.modes[m]);
+  if (!SEL.length) SEL = MODES.default_modes.slice();
+  SEL = orderedModes(SEL);
+  FMT = ls.get("sketch.formats", ["png", "svg"]);
+  if (!FMT.includes("png")) FMT.unshift("png");
+  await loadHealth();
+  modeChips(); fmtChips(); selects(); countLabel();
+  loadPosts(); loadRuns();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: install d2 (bundles the TALA layout engine)
+        run: |
+          curl -fsSL https://d2lang.com/install.sh | sh -s -- --prefix "$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: check d2, tala, and png export
+        run: |
+          d2 --version
+          d2 layout 2>&1 | tee /tmp/layouts
+          grep -qi tala /tmp/layouts
+          # first png export downloads a headless browser. do it here, not
+          # inside the smoke run, where RENDER_TIMEOUT would race four workers.
+          echo 'a -> b' | d2 - "$RUNNER_TEMP/warm.png"
+
+      - name: install inkpost
+        run: pip install -e .
+
+      - name: smoke — mock backend, end to end, no api key
+        env:
+          INKPOST_BACKEND: mock
+        run: |
+          mkdir -p posts
+          cat > posts/smoke.md <<'MD'
+          ---
+          title: the smoke test
+          ---
+          i shipped it on a friday and the deploy took the site down for ten minutes.
+          the fix was one line. the lesson was not. every step of the release ran
+          fine on my machine and then the queue backed up, the workers died, and
+          the dashboard went green again only after i rolled back by hand.
+          MD
+          inkpost posts/smoke.md -b mock -m paper -f png --no-open
+          inkpost --list
+          inkpost --runs
+          ls -R runs
+          test -n "$(find runs -name '*.png' -print -quit)" || { echo 'no png produced'; exit 1; }

@@ -1,0 +1,14 @@
+direction: right
+a: "pressure"; b: "the work"; c: "me"; d: "the clock"; e: "field"; f: "hallway"
+g: "urgency"; h: "self-trust"; i: "deadline"; j: "execution"; k: "borrowed"; l: "framework"
+m: "one"; n: "many"; o: "you"; p: "the crowd"; q: "shiny thing"; r: "the work again"; s: "a"; t: "b"
+a -> b: "plain"
+c <-> d: "both ways"
+e -- f: "no arrow"
+g -> h: "dashed, erodes" {style.stroke-dash: 4}
+i -> j: "thick" {style.stroke-width: 5}
+k -> l: "diamond head" {target-arrowhead: {shape: diamond; style.filled: true}}
+m -> n: "crow's foot" {target-arrowhead: {shape: cf-many}}
+o -> p: "circle head" {target-arrowhead: {shape: circle}}
+q -> r: "animated (svg only)" {style.animated: true}
+s -> t: "red, bold" {style.stroke: "#c0392b"; style.bold: true; style.font-color: "#c0392b"}

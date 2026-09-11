@@ -1,0 +1,36 @@
+# "hey man, are my thoughts real…"
+direction: right
+
+didnt: "things i didn't choose" {
+  style.stroke-dash: 5
+  style.fill: transparent
+
+  name: "my name"
+  lang: "the first language\ni spoke"
+  rules: "rules i was taught before\ni knew what a rule was"
+  school: "school: find x\n(never why x matters)"
+  tweets: "every tweet i liked"
+  pods: "podcasts i\nhalf-listened to"
+  convos: "convos i wasn't part of\nbut still absorbed"
+  menu: "the menu of dreams\nsomeone else wrote"
+}
+
+me: "“my” thoughts" {shape: cloud}
+
+didnt.name -> me
+didnt.lang -> me
+didnt.rules -> me
+didnt.school -> me
+didnt.tweets -> me
+didnt.pods -> me
+didnt.convos -> me
+didnt.menu -> me
+
+erase: "erase the noise.\nthe conditioning. the defaults. the shoulds." {shape: hexagon}
+free: "what would ohm choose\nif ohm was truly free?" {
+  shape: circle
+  style.fill: "#ffe8a3"
+  style.bold: true
+}
+
+me -> erase -> free

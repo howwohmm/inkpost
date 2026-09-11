@@ -1,0 +1,9 @@
+# test: one question that sorts the world
+direction: down
+thing: "the thing" {shape: page}
+q: "the question\nthat sorts it?" {shape: diamond}
+no: "one answer."
+yes: "the other answer." {style.fill: "#ffe8a3"}
+thing -> q
+q -> no: "yes"
+q -> yes: "no"

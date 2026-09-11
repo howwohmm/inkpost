@@ -1,0 +1,21 @@
+# collapse: the open field (no edges → tala scatters) → one hallway
+direction: down
+field: "the open field" {
+  style.stroke-dash: 5
+  style.fill: transparent
+  o1: "option"
+  o2: "another option"
+  o3: "the meta-option"
+  o4: "the guilt"
+  o5: "the question"
+  o6: "the rabbit hole"
+  me: "me" {shape: circle; style.fill: "#ffe8a3"}
+}
+hallway: "the hallway" {
+  direction: right
+  me: "me" {shape: circle; style.fill: "#ffe8a3"}
+  task: "the task"
+  end: "the clock" {shape: circle}
+  me -> task -> end
+}
+field -> hallway: "the thing that collapses it" {style.bold: true}

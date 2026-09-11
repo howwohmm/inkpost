@@ -1,0 +1,30 @@
+# the meta-work loop, and the only exit
+direction: down
+
+bandwidth: "no deadline =\ntoo much bandwidth" {shape: oval}
+plan: "planning how to\ndo the work"
+research: "researching the\nperfect way to do it"
+systems: "building systems\nto help do it"
+bad: "feeling bad about\nnot doing it"
+
+bandwidth -> plan
+plan -> research
+research -> systems
+systems -> bad
+bad -> plan: "again" {style.stroke-dash: 3}
+
+deadline: "12 hours before it's due" {
+  shape: hexagon
+  style.fill: "#ffe8a3"
+}
+exec: "execution mode.\none sitting. something decent."
+
+bad -> deadline: "a real consequence"
+deadline -> exec
+
+note: |md
+  this isn't laziness. it's rational.
+  why burn calories on execution
+  when there's no penalty for delay?
+|
+note.near: bottom-left
